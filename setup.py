@@ -37,6 +37,7 @@ ext_modules.append(
         sources=[
             "csrc/flash_api.cpp",
             "csrc/flash_fwd_mla_bf16_sm90.cu",
+            "csrc/flash_mla_warpper_tensor.cpp",
         ],
         extra_compile_args={
             "cxx": cxx_args,
