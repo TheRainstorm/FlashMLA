@@ -1,20 +1,23 @@
+MAKEFILE_DIR = $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
+ROOT_DIR = $(abspath $(MAKEFILE_DIR)/..)
+CONDA_ENV ?= /root/miniconda3/envs/kt
 # 编译器和编译选项
 NVCC = nvcc
 CXXFLAGS = -std=c++17 -O0 -g
 INCLUDE_DIRS = \
-    -I/home/yfy/repo/FlashMLA/csrc \
-    -I/home/yfy/repo/FlashMLA/csrc/cutlass/include \
-    -I/home/yfy/miniconda3/envs/torch12/lib/python3.12/site-packages/torch/include/torch/csrc/api/include/ \
-    -I/home/yfy/miniconda3/envs/torch12/lib/python3.12/site-packages/torch/include/ \
-    -I/home/yfy/miniconda3/envs/torch12/include/python3.12/ \
-    -I/home/yfy/miniconda3/envs/torch12/lib/python3.12/site-packages/pybind11/include/  # 新增
+    -I$(ROOT_DIR)/csrc \
+    -I$(ROOT_DIR)/csrc/cutlass/include \
+    -I$(CONDA_ENV)/lib/python3.11/site-packages/torch/include/torch/csrc/api/include/ \
+    -I$(CONDA_ENV)/lib/python3.11/site-packages/torch/include/ \
+    -I$(CONDA_ENV)/include/python3.11/ \
+    -I$(CONDA_ENV)/lib/python3.11/site-packages/pybind11/include/  # 新增
 CUDA_ARCH = -gencode arch=compute_90a,code=sm_90a
 LDFLAGS = \
-    -L/home/yfy/miniconda3/envs/torch12/lib/python3.12/site-packages/torch/lib/ \
-    -L/home/yfy/miniconda3/envs/torch12/lib/ \
+    -L$(CONDA_ENV)/lib/python3.11/site-packages/torch/lib/ \
+    -L$(CONDA_ENV)/lib/ \
     -lc10 -lc10_cuda -ltorch -ltorch_cpu -ltorch_cuda \
     -ltorch_python \
-    -lpython3.12
+    -lpython3.11
 
 MAKEFILE_DIR = $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
 ROOT_DIR = $(abspath $(MAKEFILE_DIR)/..)

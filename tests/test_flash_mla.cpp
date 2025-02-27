@@ -46,14 +46,14 @@ int main() {
     const int num_blocks = b * max_num_blocks;
     torch::Tensor kcache = torch::randn(
         {num_blocks, block_size, h_kv, d}, torch::kFloat32).to(device);
-    torch::Tensor vcache = torch::randn(
-        {num_blocks, block_size, h_kv, dv}, torch::kFloat32).to(device);
+    // torch::Tensor vcache = torch::randn(
+    //     {num_blocks, block_size, h_kv, dv}, torch::kFloat32).to(device);
 
     // 生成查询张量 [b, s_q, h_q, d]
     torch::Tensor q = torch::randn({b, s_q, h_q, d}, torch::kFloat32).to(device);
 
     // 调用目标函数
-    std::optional<const torch::Tensor> vcache_opt(vcache);
+    std::optional<const torch::Tensor> vcache_opt;
     const float softmax_scale = 1.0f / std::sqrt(d);
     
     auto outputs = mha_fwd_kvcache_mla2(
