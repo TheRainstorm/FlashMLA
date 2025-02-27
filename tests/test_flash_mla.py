@@ -65,9 +65,13 @@ def test_flash_mla(b, s_q, mean_sk, h_q, h_kv, d, dv, causal, varlen):
         )
     blocked_v = blocked_k[..., :dv]
 
+    import time
+    tic = time.time()
     tile_scheduler_metadata, num_splits = get_mla_metadata(
         cache_seqlens, s_q * h_q // h_kv, h_kv
     )
+    toc = time.time()
+    print(f"get_mla_metadata elap: {toc - tic}")
 
     def flash_mla():
         return flash_mla_with_kvcache(
@@ -111,6 +115,16 @@ def test_flash_mla(b, s_q, mean_sk, h_q, h_kv, d, dv, causal, varlen):
     cal_diff(out_flash, out_torch, "out")
     # cal_diff(lse_flash, lse_torch, "lse")
 
+    print("my wrapper")
+    t = triton.testing.do_bench(flash_mla2)
+    FLOPS = s_q * total_seqlens * h_q * (d + dv) * 2
+    bytes = (total_seqlens * h_kv * d + b * s_q * h_q * d + b * s_q * h_q * dv) * (
+        torch.finfo(q.dtype).bits // 8
+    )
+    print(
+        f"{t:.3f} ms, {FLOPS / 10 ** 9 / t:.0f} TFLOPS, {bytes / 10 ** 6 / t:.0f} GB/s"
+    )
+    print("ori")
     t = triton.testing.do_bench(flash_mla)
     FLOPS = s_q * total_seqlens * h_q * (d + dv) * 2
     bytes = (total_seqlens * h_kv * d + b * s_q * h_q * d + b * s_q * h_q * dv) * (

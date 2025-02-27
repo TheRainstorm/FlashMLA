@@ -24,8 +24,8 @@ int get_mla_metadata_mod(
     int batch_size,
     const int num_heads_per_head_k,
     const int num_heads_k,
-    int *tile_scheduler_metadata_ptr,
-    int *num_splits_ptr,
+    int **tile_scheduler_metadata_ptr_,
+    int **num_splits_ptr_,
     cudaDeviceProp *dprops,
     cudaStream_t *stream
 ) {
@@ -50,6 +50,8 @@ int get_mla_metadata_mod(
     // auto num_splits = torch::empty({batch_size + 1}, options);
     // int *tile_scheduler_metadata_ptr = tile_scheduler_metadata.data_ptr<int>();
     // int *num_splits_ptr = num_splits.data_ptr<int>();
+    int *tile_scheduler_metadata_ptr;
+    int *num_splits_ptr;
     cudaMalloc((void **)&tile_scheduler_metadata_ptr, num_sm_parts * TileSchedulerMetaDataSize * sizeof(int));
     cudaMalloc((void **)&num_splits_ptr, (batch_size + 1) * sizeof(int));
 
@@ -66,7 +68,11 @@ int get_mla_metadata_mod(
     params.num_sm_parts = num_sm_parts;
     get_mla_metadata_func(params, *stream);
 
+    // return GPU address
+    *tile_scheduler_metadata_ptr_ = tile_scheduler_metadata_ptr;
+    *num_splits_ptr_ = num_splits_ptr;
     // return {tile_scheduler_metadata, num_splits};
+
     return num_sm_parts;
 }
 
@@ -79,7 +85,7 @@ void flash_mla_page_kvcache_fwd(
     const int32_t seqlen_q_ori,
     const int32_t num_heads_ori,
     const int32_t head_size,
-    void *kcache_ptr, // (num_blocks, page_block_size, num_heads_k), kT
+    void *kcache_ptr, // (num_blocks, page_block_size, num_heads_k, head_size), kT
     const int num_blocks,
     const int page_block_size,
     const int num_heads_k,
@@ -217,7 +223,7 @@ void flash_mla_page_kvcache_fwd(
         return strides;
     };
     auto q_stride = get_stride({batch_size, seqlen_q, num_heads, head_size});
-    auto kcache_stride = get_stride({num_blocks, page_block_size, num_heads_k});
+    auto kcache_stride = get_stride({num_blocks, page_block_size, num_heads_k, head_size});
     auto out_stride = get_stride({batch_size, seqlen_q, num_heads, head_size_v});
     auto vcache_stride = kcache_stride;
 
@@ -225,14 +231,14 @@ void flash_mla_page_kvcache_fwd(
     params.k_batch_stride = kcache_stride.at(0);
     params.v_batch_stride = vcache_stride.at(0);
     params.o_batch_stride = out_stride.at(0);
-    params.q_row_stride = q_stride.at(-3);
-    params.k_row_stride = kcache_stride.at(-3);
-    params.v_row_stride = vcache_stride.at(-3);
-    params.o_row_stride = out_stride.at(-3);
-    params.q_head_stride = q_stride.at(-2);
-    params.k_head_stride = kcache_stride.at(-2);
-    params.v_head_stride = vcache_stride.at(-2);
-    params.o_head_stride = out_stride.at(-2);
+    params.q_row_stride = q_stride.at(1);
+    params.k_row_stride = kcache_stride.at(1);
+    params.v_row_stride = vcache_stride.at(1);
+    params.o_row_stride = out_stride.at(1);
+    params.q_head_stride = q_stride.at(2);
+    params.k_head_stride = kcache_stride.at(2);
+    params.v_head_stride = vcache_stride.at(2);
+    params.o_head_stride = out_stride.at(2);
 
     params.block_table = (int32_t *)block_table_ptr;
     // params.block_table_batch_stride = block_table.stride(0);
@@ -243,7 +249,7 @@ void flash_mla_page_kvcache_fwd(
     int *num_splits_ptr;
     int num_heads_per_head_k = seqlen_q_ori * num_heads_ori / num_heads_k;
     int num_sm_parts = get_mla_metadata_mod<int>(cache_seqlens_k_ptr, batch_size, num_heads_per_head_k, num_heads_k,
-                                    tile_scheduler_metadata_ptr, num_splits_ptr, &dprops, &stream);
+                                    &tile_scheduler_metadata_ptr, &num_splits_ptr, &dprops, &stream);
     // TORCH_CHECK(tile_scheduler_metadata.dtype() == torch::kInt32, "tile_scheduler_metadata must have dtype int32");
     // TORCH_CHECK(tile_scheduler_metadata.size(1) == TileSchedulerMetaDataSize);
     // CHECK_DEVICE(tile_scheduler_metadata);
