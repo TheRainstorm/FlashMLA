@@ -4,13 +4,12 @@
 #include <c10/cuda/CUDAGuard.h>
 #include <cuda_fp16.h>
 #include <cuda_bf16.hpp>
-
 // #include <cutlass/fast_math.h>
 
 // #include "flash_mla.h"
 // #include "static_switch.h"
 
-#include "flash_mla_warpper.hpp"
+#include "flash_mla_wrapper.hpp"
 
 // void flash_mla_page_kvcache_fwd(
 //     void *q_ptr, // (batch_size, seqlen_q, num_heads, head_size), kBFloat16
@@ -40,7 +39,7 @@ std::vector<at::Tensor>
 mha_fwd_kvcache_mla2(
     at::Tensor &q,                               // batch_size x seqlen_q x num_heads x head_size
     const at::Tensor &kcache,                    // num_blocks x page_block_size x num_heads_k x head_size
-    c10::optional<const at::Tensor> &vcache_,    // num_blocks x page_block_size x num_heads_k x head_size_v
+    std::optional<const at::Tensor> &vcache_,    // num_blocks x page_block_size x num_heads_k x head_size_v
     const int head_size_v,
     const at::Tensor &seqlens_k,                 // batch_size
     const at::Tensor &block_table,               // batch_size x max_num_blocks_per_seq
@@ -68,7 +67,7 @@ mha_fwd_kvcache_mla2(
     at::Tensor out = torch::empty({batch_size, seqlen_q_ori, num_heads_ori, head_size_v}, opts);
     void* o_ptr = out.data_ptr();
 
-    onnxinfer::contrib::cuda::flash_mla_page_kvcache_fwd<float>(
+    onnxinfer::contrib::cuda::flash_mla_page_kvcache_fwd<cutlass::half_t>(
         q_ptr,
         batch_size,
         seqlen_q_ori,

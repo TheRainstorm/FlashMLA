@@ -7,3 +7,5 @@ dist/
 *.log
 *perf.csv
 *.png
+*.o
+tests/test_flash_mla
