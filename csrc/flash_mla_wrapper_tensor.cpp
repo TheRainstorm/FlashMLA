@@ -88,43 +88,61 @@ mha_fwd_kvcache_mla_wrapper(
     void *softmax_lseaccum_ptr = softmax_lse_accum.data_ptr();
     void *oaccum_ptr = out_accum.data_ptr();
 
-    onnxinfer::contrib::cuda::flash_mla_page_kvcache_fwd<cutlass::half_t>(
-        q_ptr,
-        batch_size,
-        seqlen_q_ori,
-        num_heads_ori,
-        head_size,
+    auto q_dtype = q.dtype();
+    if (q_dtype == torch::kBFloat16) {
+        onnxinfer::contrib::cuda::flash_mla_page_kvcache_fwd<cutlass::bfloat16_t>(
+            q_ptr,batch_size,seqlen_q_ori,num_heads_ori,head_size,
+            kcache_ptr,num_blocks,page_block_size,num_heads_k,vcache_ptr,block_table_ptr,max_num_blocks_per_seq,cache_seqlens_k_ptr,head_size_v,softmax_scale,is_causal,
+            tile_scheduler_metadata_ptr,num_sm_parts,num_splits_ptr,
+            dprops,stream,
+            o_ptr,softmax_lse_ptr,oaccum_ptr,softmax_lseaccum_ptr
+        );
+    }
+    #ifndef FLASH_MLA_DISABLE_FP16
+    else if (q_dtype == torch::kHalf) {
+        onnxinfer::contrib::cuda::flash_mla_page_kvcache_fwd<cutlass::half_t>(
+            q_ptr,
+            batch_size,
+            seqlen_q_ori,
+            num_heads_ori,
+            head_size,
 
-        kcache_ptr,
-        num_blocks,
-        page_block_size,
-        num_heads_k,
-        vcache_ptr,
-        block_table_ptr,
-        max_num_blocks_per_seq,
-        cache_seqlens_k_ptr,
-        head_size_v,
-        softmax_scale,
-        is_causal,
+            kcache_ptr,
+            num_blocks,
+            page_block_size,
+            num_heads_k,
+            vcache_ptr,
+            block_table_ptr,
+            max_num_blocks_per_seq,
+            cache_seqlens_k_ptr,
+            head_size_v,
+            softmax_scale,
+            is_causal,
 
-        // get_mla_metadata
-        tile_scheduler_metadata_ptr,
-        num_sm_parts,
-        num_splits_ptr,
+            // get_mla_metadata
+            tile_scheduler_metadata_ptr,
+            num_sm_parts,
+            num_splits_ptr,
 
-        dprops,
-        stream,
+            dprops,
+            stream,
 
-        // output
-        o_ptr,
-        softmax_lse_ptr,
-        oaccum_ptr,
-        softmax_lseaccum_ptr
-    );
+            // output
+            o_ptr,
+            softmax_lse_ptr,
+            oaccum_ptr,
+            softmax_lseaccum_ptr
+        );
+    }
+    #endif
+    else {
+        TORCH_CHECK(false, "Unsupported tensor dtype for query");
+    }
+    
     const int ngroups = num_heads_ori / num_heads_k;
     out = out.view({batch_size, seqlen_q_ori, ngroups, num_heads_k, head_size_v}).transpose(2, 3)
             .reshape({batch_size, seqlen_q_ori, num_heads_ori, head_size_v});
-    // 不转置 softmax_lse 会比对失败（因为 seqlen_q_ori, ngroups 可能都不为1）
+    // 不转置，softmax_lse 会比对失败（因为 seqlen_q_ori, ngroups 可能都不为1）
     softmax_lse = softmax_lse.view({batch_size, num_heads_k, seqlen_q_ori, ngroups}).transpose(2, 3)
             .reshape({batch_size, num_heads_ori, seqlen_q_ori});
     
