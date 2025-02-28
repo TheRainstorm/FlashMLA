@@ -4,12 +4,9 @@
 #include <c10/cuda/CUDAGuard.h>
 #include <cuda_fp16.h>
 #include <cuda_bf16.hpp>
-// #include <cutlass/fast_math.h>
+#include <cutlass/fast_math.h>
 
-// #include "flash_mla.h"
-// #include "static_switch.h"
-
-#include "flash_mla_wrapper.hpp"
+#include "flash_mla_wrapper.h"
 
 std::vector<at::Tensor>
 get_mla_metadata_wrapper(
@@ -24,7 +21,7 @@ get_mla_metadata_wrapper(
     auto stream = at::cuda::getCurrentCUDAStream().stream();
     int num_sm_parts, TileSchedulerMetaDataSize, *tile_scheduler_metadata_ptr, *num_splits_ptr;
     // <int> 仅用于占位
-    std::tie(num_sm_parts, TileSchedulerMetaDataSize, tile_scheduler_metadata_ptr, num_splits_ptr) = onnxinfer::contrib::cuda::get_mla_metadata<int>(
+    std::tie(num_sm_parts, TileSchedulerMetaDataSize, tile_scheduler_metadata_ptr, num_splits_ptr) = onnxinfer::contrib::cuda::get_mla_metadata(
         seqlens_k.data_ptr(),
         batch_size,
         num_heads_per_head_k,

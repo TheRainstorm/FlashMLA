@@ -24,6 +24,7 @@ def get_sources():
         "csrc/flash_api.cpp",
         "csrc/flash_fwd_mla_bf16_sm90.cu",
         "csrc/flash_fwd_mla_metadata.cu",
+        "csrc/flash_mla_wrapper.cpp",
         "csrc/flash_mla_wrapper_tensor.cpp",
     ]
 
