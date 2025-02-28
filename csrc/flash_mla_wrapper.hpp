@@ -17,17 +17,21 @@ namespace cuda {
 
 using namespace std;
 
+/**
+ * @brief Get the mla metadata object
+ * 
+ * @return num_sm_parts, TileSchedulerMetaDataSize, 
+ *  tile_scheduler_metadata: (num_sm_parts, TileSchedulerMetaDataSize), int
+ *  num_splits_ptr: (batch_size + 1, )
+ */
 template <typename T>
-int get_mla_metadata_mod(
-    // at::Tensor &seqlens_k,
-    void *seqlens_k_ptr, // kInt32
+std::tuple<int, int, int*, int*> get_mla_metadata(
+    void *seqlens_k_ptr, // (batch_size, ), int32
     int batch_size,
     const int num_heads_per_head_k,
     const int num_heads_k,
-    int **tile_scheduler_metadata_ptr_,
-    int **num_splits_ptr_,
     cudaDeviceProp *dprops,
-    cudaStream_t *stream
+    cudaStream_t stream
 ) {
     // This should match the logic in the MLA kernel.
     static constexpr int block_size_m = 64;
@@ -66,34 +70,27 @@ int get_mla_metadata_mod(
     params.block_size_n = block_size_n;
     params.fixed_overhead_num_blocks = fixed_overhead_num_blocks;
     params.num_sm_parts = num_sm_parts;
-    get_mla_metadata_func(params, *stream);
+    get_mla_metadata_func(params, stream);
 
     // return GPU address
-    *tile_scheduler_metadata_ptr_ = tile_scheduler_metadata_ptr;
-    *num_splits_ptr_ = num_splits_ptr;
     // return {tile_scheduler_metadata, num_splits};
-
-    return num_sm_parts;
+    return std::make_tuple(num_sm_parts, TileSchedulerMetaDataSize, tile_scheduler_metadata_ptr, num_splits_ptr);
 }
 
 template <typename T>
 void flash_mla_page_kvcache_fwd(
-    // q: torch.Tensor,
-    // k_cache: torch.Tensor,
-    void *q_ptr, // (batch_size, seqlen_q, num_heads, head_size), kT
+    void *q_ptr, // (batch_size, seqlen_q, num_heads, head_size), T
     const int32_t batch_size,
     const int32_t seqlen_q_ori,
     const int32_t num_heads_ori,
     const int32_t head_size,
-    void *kcache_ptr, // (num_blocks, page_block_size, num_heads_k, head_size), kT
+    void *kcache_ptr, // (num_blocks, page_block_size, num_heads_k, head_size), T
     const int num_blocks,
     const int page_block_size,
     const int num_heads_k,
-    void *vcache_ptr, // optionnal
+    std::optional<void *> vcache_ptr_,
 
-    // block_table: torch.Tensor,
-    // cache_seqlens: torch.Tensor,
-    void *block_table_ptr, //  ( , max_num_blocks_per_seq), kInt32
+    void *block_table_ptr, //  (batch_size , max_num_blocks_per_seq), kInt32
     const int max_num_blocks_per_seq,
     void *cache_seqlens_k_ptr, // (batch_size, ), int32
 
@@ -102,49 +99,26 @@ void flash_mla_page_kvcache_fwd(
     const float softmax_scale,
     bool is_causal,
 
+    int *tile_scheduler_metadata_ptr,   // num_sm_parts x TileSchedulerMetaDataSize
+    int num_sm_parts,
+    int *num_splits_ptr,                // batch_size + 1
+
+    cudaDeviceProp *dprops,
+    cudaStream_t stream,
+
     // output
-    void *o_ptr
-    // void *softmax_lse_ptr = nullptr
+    void *o_ptr,
+    void *softmax_lse_ptr,
+    void *oaccum_ptr,
+    void *softmax_lseaccum_ptr
+){
+    assert(dprops->major == 9 && dprops->minor == 0);
 
-    // cudaDeviceProp* dprops,
-    // cudaStream_t stream,
+    void *vcache_ptr = vcache_ptr_.has_value() ? vcache_ptr_.value() : kcache_ptr;
 
-    // compare to fmha_page_kvcache_fwd, not used params
-    // void* k_ptr,
-    // void* v_ptr,
-    // const int32_t max_cache_seq_k,
-    // const int32_t seqlen_k,
-    
-    // AllocatorPtr alloc,
-    // int window_size_left,
-    // int window_size_right,
-    // const int32_t num_splits,
-    // void* cache_batch_idx_ptr,
-    // void* rotary_cos_ptr,
-    // void* rotary_sin_ptr,
-    // bool is_rotary_interleaved,
-    // bool is_bf16
-) {
-    // auto dprops = at::cuda::getCurrentDeviceProperties();
-    // bool is_sm90 = dprops->major == 9 && dprops->minor == 0;
-    // TORCH_CHECK(is_sm90);
-    cudaDeviceProp dprops;
-    cudaGetDeviceProperties(&dprops, 0); // 0 表示当前设备
-    assert(dprops.major == 9 && dprops.minor == 0);
-    cudaStream_t stream;
-    cudaStreamCreate(&stream);
-
-    // at::Tensor vcache = vcache_.has_value() ? vcache_.value() : kcache;
-    // auto q_dtype = q.dtype();
-    // TORCH_CHECK(q_dtype == torch::kT);
-    // TORCH_CHECK(kcache.dtype() == q_dtype, "query and key must have the same dtype");
-
-    // CHECK_DEVICE(q); CHECK_DEVICE(kcache); CHECK_DEVICE(vcache);
-    
     // TORCH_CHECK(q.stride(-1) == 1, "Input tensor must have contiguous last dimension");
     // TORCH_CHECK(kcache.stride(-1) == 1, "Input tensor must have contiguous last dimension");
     // TORCH_CHECK(vcache.stride(-1) == 1, "Input tensor must have contiguous last dimension");
-
     // CHECK_DEVICE(block_table);
     // TORCH_CHECK(block_table.dtype() == torch::kInt32, "block_table must have dtype torch.int32");
     // TORCH_CHECK(block_table.stride(-1) == 1, "block_table must have contiguous last dimension");
@@ -164,11 +138,11 @@ void flash_mla_page_kvcache_fwd(
     const int ngroups = num_heads_ori / num_heads_k;
     const int seqlen_q = seqlen_q_ori * ngroups;
     const int num_heads = num_heads_k;
-    // ???
     // q = q.view({batch_size, seqlen_q_ori, num_heads_k, ngroups, head_size}).transpose(2, 3)
     //         .reshape({batch_size, seqlen_q, num_heads, head_size});
+    assert(num_heads_k == 1);     // TODO: implement transposition for general situation
 
-    int head_size_k = head_size;
+    // int head_size_k = head_size;
     // CHECK_SHAPE(q, batch_size, seqlen_q, num_heads, head_size);
     // CHECK_SHAPE(kcache, num_blocks, page_block_size, num_heads_k, head_size_k);
     // if (vcache_.has_value()) { CHECK_SHAPE(vcache, num_blocks, page_block_size, num_heads_k, head_size_v); }
@@ -180,16 +154,11 @@ void flash_mla_page_kvcache_fwd(
     // CHECK_SHAPE(seqlens_k, batch_size);
 
     // at::cuda::CUDAGuard device_guard{(char)q.get_device()};
-
     // auto opts = q.options();
     // at::Tensor out = torch::empty({batch_size, seqlen_q, num_heads, head_size_v}, opts);
     // at::Tensor softmax_lse = torch::empty({batch_size, num_heads, seqlen_q}, opts.dtype(at::kFloat));
-    size_t out_size = batch_size * seqlen_q * num_heads * head_size_v * sizeof(T);
-    float *softmax_lse_ptr;
-    size_t softmax_lse_size = batch_size * num_heads * seqlen_q * sizeof(float);
-    // cudaMalloc((void **)&out_ptr, out_size);
-    cudaMalloc((void **)&softmax_lse_ptr, softmax_lse_size);
     // if (softmax_lse_ptr == nullptr) {
+    //     size_t softmax_lse_size = batch_size * num_heads * seqlen_q * sizeof(float);
     //     cudaMalloc((void **)&softmax_lse_ptr, softmax_lse_size);
     // }
     
@@ -207,7 +176,7 @@ void flash_mla_page_kvcache_fwd(
     params.scale_softmax = softmax_scale;
     params.scale_softmax_log2 = float(softmax_scale * M_LOG2E);
     // Set the pointers and strides.
-    params.q_ptr = (void *)q_ptr; // ???
+    params.q_ptr = (void *)q_ptr;
     params.k_ptr = (void *)kcache_ptr;
     params.v_ptr = (void *)vcache_ptr;
     params.o_ptr = (void *)o_ptr;
@@ -241,15 +210,9 @@ void flash_mla_page_kvcache_fwd(
     params.o_head_stride = out_stride.at(2);
 
     params.block_table = (int32_t *)block_table_ptr;
-    // params.block_table_batch_stride = block_table.stride(0);
-    params.block_table_batch_stride = max_num_blocks_per_seq;
+    params.block_table_batch_stride = max_num_blocks_per_seq; //stride(0)
     params.page_block_size = page_block_size;
     
-    int *tile_scheduler_metadata_ptr;
-    int *num_splits_ptr;
-    int num_heads_per_head_k = seqlen_q_ori * num_heads_ori / num_heads_k;
-    int num_sm_parts = get_mla_metadata_mod<int>(cache_seqlens_k_ptr, batch_size, num_heads_per_head_k, num_heads_k,
-                                    &tile_scheduler_metadata_ptr, &num_splits_ptr, &dprops, &stream);
     // TORCH_CHECK(tile_scheduler_metadata.dtype() == torch::kInt32, "tile_scheduler_metadata must have dtype int32");
     // TORCH_CHECK(tile_scheduler_metadata.size(1) == TileSchedulerMetaDataSize);
     // CHECK_DEVICE(tile_scheduler_metadata);
@@ -261,19 +224,16 @@ void flash_mla_page_kvcache_fwd(
     // CHECK_CONTIGUOUS(num_splits);
     params.num_splits_ptr = num_splits_ptr;
 
-    float *softmax_lseaccum_ptr;
-    float *oaccum_ptr;
-    cudaMalloc((void **)&softmax_lseaccum_ptr, (batch_size + params.num_sm_parts) * seqlen_q * num_heads * sizeof(float));
-    cudaMalloc((void **)&oaccum_ptr, (batch_size + params.num_sm_parts) * seqlen_q * num_heads * head_size_v * sizeof(float));
-
+    // float *softmax_lseaccum_ptr;
+    // float *oaccum_ptr;
+    // cudaMalloc((void **)&softmax_lseaccum_ptr, (batch_size + params.num_sm_parts) * seqlen_q * num_heads * sizeof(float));
+    // cudaMalloc((void **)&oaccum_ptr, (batch_size + params.num_sm_parts) * seqlen_q * num_heads * head_size_v * sizeof(float));
+    
     // at::Tensor softmax_lse_accum = torch::empty({batch_size + params.num_sm_parts, num_heads, seqlen_q}, opts.dtype(at::kFloat));
     // at::Tensor out_accum = torch::empty({batch_size + params.num_sm_parts, num_heads, seqlen_q, head_size_v}, opts.dtype(at::kFloat));
     params.softmax_lseaccum_ptr = softmax_lseaccum_ptr;
     params.oaccum_ptr = oaccum_ptr;
 
-    // auto stream = at::cuda::getCurrentCUDAStream().stream();
-
-    // TORCH_CHECK(head_size == 576);
     assert(head_size == 576);
     // run_mha_fwd_splitkv_mla<cutlass::bfloat16_t, 576>(params, stream);
     run_mha_fwd_splitkv_mla<T, 576>(params, stream);
@@ -282,8 +242,6 @@ void flash_mla_page_kvcache_fwd(
     // softmax_lse = softmax_lse.view({batch_size, num_heads_k, seqlen_q_ori, ngroups}).transpose(2, 3)
     //         .reshape({batch_size, num_heads_ori, seqlen_q_ori});
     // return {out, softmax_lse};
-
-    cudaStreamDestroy(stream);
 }
 
 } // namespace cuda

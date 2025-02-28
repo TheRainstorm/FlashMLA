@@ -33,7 +33,9 @@ def cal_diff(x: torch.Tensor, y: torch.Tensor, name: str) -> None:
     RMSE = ((x - y) * (x - y)).mean().sqrt().item()
     cos_diff = 1 - 2 * (x * y).sum().item() / max((x * x + y * y).sum().item(), 1e-12)
     amax_diff = (x - y).abs().max().item()
-    # print(f"{name}: {cos_diff=}, {RMSE=}, {amax_diff=}")
+    print(x.stride(), y.stride())
+    print(x.size(), y.size())
+    print(f"{name}: {cos_diff=}, {RMSE=}, {amax_diff=}")
     assert cos_diff < 1e-5
 
 
@@ -65,6 +67,7 @@ def test_flash_mla(b, s_q, mean_sk, h_q, h_kv, d, dv, causal, varlen):
         )
     blocked_v = blocked_k[..., :dv]
 
+    import pdb
     import time
     tic = time.time()
     tile_scheduler_metadata, num_splits = get_mla_metadata(
@@ -72,8 +75,15 @@ def test_flash_mla(b, s_q, mean_sk, h_q, h_kv, d, dv, causal, varlen):
     )
     toc = time.time()
     print(f"get_mla_metadata elap: {toc - tic}")
-
-    def flash_mla():
+    
+    tile_scheduler_metadata_, num_splits_ = get_mla_metadata( cache_seqlens, s_q * h_q // h_kv, h_kv, my_wrapper=True)
+    # pdb.set_trace()
+    print(f"get_mla_metadata my_wrapper")
+    cal_diff(tile_scheduler_metadata, tile_scheduler_metadata_, "tile_scheduler_metadata")
+    cal_diff(num_splits, num_splits_, "num_splits")
+    print(f"after check my_wrapper")
+    
+    def flash_mla(my_wrapper= False):
         return flash_mla_with_kvcache(
             q,
             blocked_k,
@@ -83,13 +93,10 @@ def test_flash_mla(b, s_q, mean_sk, h_q, h_kv, d, dv, causal, varlen):
             tile_scheduler_metadata,
             num_splits,
             causal=causal,
+            my_wrapper= my_wrapper
         )
-    def flash_mla2():
-        from flash_mla import flash_mla_with_kvcache2
-        return flash_mla_with_kvcache2(
-            q, blocked_k, block_table, cache_seqlens, dv,
-            causal=causal
-        )
+    def flash_mla_my_wrapper():
+        return flash_mla(my_wrapper= True)
 
     def ref_mla():
         out = torch.empty(b, s_q, h_q, dv, dtype=torch.float32)
@@ -110,13 +117,13 @@ def test_flash_mla(b, s_q, mean_sk, h_q, h_kv, d, dv, causal, varlen):
         return out, lse
 
     # out_flash, lse_flash = flash_mla()
-    out_flash, lse_flash = flash_mla2()
+    out_flash, lse_flash = flash_mla(my_wrapper = True)
     out_torch, lse_torch = ref_mla()
     cal_diff(out_flash, out_torch, "out")
-    # cal_diff(lse_flash, lse_torch, "lse")
+    cal_diff(lse_flash, lse_torch, "lse")
 
-    print("my wrapper")
-    t = triton.testing.do_bench(flash_mla2)
+    print(f"{'my wrapper':10s}: ", end='')
+    t = triton.testing.do_bench(flash_mla_my_wrapper)
     FLOPS = s_q * total_seqlens * h_q * (d + dv) * 2
     bytes = (total_seqlens * h_kv * d + b * s_q * h_q * d + b * s_q * h_q * dv) * (
         torch.finfo(q.dtype).bits // 8
@@ -124,7 +131,7 @@ def test_flash_mla(b, s_q, mean_sk, h_q, h_kv, d, dv, causal, varlen):
     print(
         f"{t:.3f} ms, {FLOPS / 10 ** 9 / t:.0f} TFLOPS, {bytes / 10 ** 6 / t:.0f} GB/s"
     )
-    print("ori")
+    print(f"{'ori':10s}: ", end='')
     t = triton.testing.do_bench(flash_mla)
     FLOPS = s_q * total_seqlens * h_q * (d + dv) * 2
     bytes = (total_seqlens * h_kv * d + b * s_q * h_q * d + b * s_q * h_q * dv) * (
