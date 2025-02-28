@@ -32,8 +32,9 @@ get_mla_metadata_wrapper(
         dprops,
         stream
     );
-    torch::Tensor tile_scheduler_metadata = torch::from_blob(tile_scheduler_metadata_ptr, {num_sm_parts, TileSchedulerMetaDataSize}, {TileSchedulerMetaDataSize, 1}, opts.dtype(at::kFloat));
-    torch::Tensor num_splits = torch::from_blob(num_splits_ptr, {batch_size + 1}, {1}, opts.dtype(at::kFloat));
+    // TODO: from_blob 可能需要手动释放显存
+    torch::Tensor tile_scheduler_metadata = torch::from_blob(tile_scheduler_metadata_ptr, {num_sm_parts, TileSchedulerMetaDataSize}, {TileSchedulerMetaDataSize, 1}, opts.dtype(torch::kInt32));
+    torch::Tensor num_splits = torch::from_blob(num_splits_ptr, {batch_size + 1}, {1}, opts.dtype(torch::kInt32));
     return {tile_scheduler_metadata, num_splits};
 }
 

@@ -9,3 +9,4 @@ dist/
 *.png
 *.o
 tests/test_flash_mla
+diff*.txt

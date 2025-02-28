@@ -33,9 +33,16 @@ def cal_diff(x: torch.Tensor, y: torch.Tensor, name: str) -> None:
     RMSE = ((x - y) * (x - y)).mean().sqrt().item()
     cos_diff = 1 - 2 * (x * y).sum().item() / max((x * x + y * y).sum().item(), 1e-12)
     amax_diff = (x - y).abs().max().item()
-    print(x.stride(), y.stride())
-    print(x.size(), y.size())
-    print(f"{name}: {cos_diff=}, {RMSE=}, {amax_diff=}")
+    
+    if cos_diff >= 1e-5:
+        print(x.size(), y.size())
+        print(x.stride(), y.stride())
+        print("ref: ", y[0, :10])
+        print("y: ", y[0, :10])
+        import numpy as np
+        np.savetxt("diff-ref.txt", x.cpu().numpy(), fmt="%f", delimiter=",")
+        np.savetxt("diff-my.txt", y.cpu().numpy(), fmt="%f", delimiter=",")
+        print(f"{name}: {cos_diff=}, {RMSE=}, {amax_diff=}")
     assert cos_diff < 1e-5
 
 
@@ -67,21 +74,19 @@ def test_flash_mla(b, s_q, mean_sk, h_q, h_kv, d, dv, causal, varlen):
         )
     blocked_v = blocked_k[..., :dv]
 
-    import pdb
-    import time
-    tic = time.time()
+    # import pdb
+    # import time
+    # tic = time.time()
     tile_scheduler_metadata, num_splits = get_mla_metadata(
-        cache_seqlens, s_q * h_q // h_kv, h_kv
+        cache_seqlens, s_q * h_q // h_kv, h_kv,
+        # my_wrapper=True
     )
-    toc = time.time()
-    print(f"get_mla_metadata elap: {toc - tic}")
+    # toc = time.time()
+    # print(f"get_mla_metadata elap: {toc - tic}")
     
-    tile_scheduler_metadata_, num_splits_ = get_mla_metadata( cache_seqlens, s_q * h_q // h_kv, h_kv, my_wrapper=True)
-    # pdb.set_trace()
-    print(f"get_mla_metadata my_wrapper")
-    cal_diff(tile_scheduler_metadata, tile_scheduler_metadata_, "tile_scheduler_metadata")
-    cal_diff(num_splits, num_splits_, "num_splits")
-    print(f"after check my_wrapper")
+    # tile_scheduler_metadata_, num_splits_ = get_mla_metadata( cache_seqlens, s_q * h_q // h_kv, h_kv, my_wrapper=True)
+    # cal_diff(tile_scheduler_metadata, tile_scheduler_metadata_, "tile_scheduler_metadata")
+    # cal_diff(num_splits, num_splits_, "num_splits")
     
     def flash_mla(my_wrapper= False):
         return flash_mla_with_kvcache(
