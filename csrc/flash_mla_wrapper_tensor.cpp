@@ -136,10 +136,10 @@ mha_fwd_kvcache_mla_wrapper(
         TORCH_CHECK(false, "Unsupported tensor dtype for query");
     }
     
+    // flash_mla_page_kvcache_fwd 没有实现转置，在外面临时实现转置
     const int ngroups = num_heads_ori / num_heads_k;
     out = out.view({batch_size, seqlen_q_ori, ngroups, num_heads_k, head_size_v}).transpose(2, 3)
             .reshape({batch_size, seqlen_q_ori, num_heads_ori, head_size_v});
-    // 不转置，softmax_lse 会比对失败（因为 seqlen_q_ori, ngroups 可能都不为1）
     softmax_lse = softmax_lse.view({batch_size, num_heads_k, seqlen_q_ori, ngroups}).transpose(2, 3)
             .reshape({batch_size, num_heads_ori, seqlen_q_ori});
     

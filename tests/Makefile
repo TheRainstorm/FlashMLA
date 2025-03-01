@@ -28,8 +28,8 @@ SRCS = \
     $(ROOT_DIR)/csrc/flash_fwd_mla_metadata.cu \
     $(ROOT_DIR)/csrc/flash_fwd_mla_fp16_sm90.cu \
     $(ROOT_DIR)/csrc/flash_fwd_mla_bf16_sm90.cu \
+    $(ROOT_DIR)/csrc/flash_mla_wrapper.cpp \
     $(ROOT_DIR)/csrc/flash_mla_wrapper_tensor.cpp
-    # $(ROOT_DIR)/csrc/flash_api.cpp \
 # OBJS = $(SRCS:.cpp=.o)
 # OBJS += $(SRCS:.cu=.o)
 # SRCS := $(shell find $(ROOT_DIR) -name '*.cpp' -o -name '*.cu')

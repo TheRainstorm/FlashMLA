@@ -182,6 +182,7 @@ void flash_mla_page_kvcache_fwd(
     // run_mha_fwd_splitkv_mla<cutlass::bfloat16_t, 576>(params, stream);
     run_mha_fwd_splitkv_mla<T, 576>(params, stream);
 
+    // TODO: 不转置，out 结果没问题（目前 h_kv===1），而 softmax_lse 会比对失败（因为 seqlen_q_ori, ngroups 可能都不为1）
     // out = out.view({batch_size, seqlen_q_ori, ngroups, num_heads_k, head_size_v}).transpose(2, 3).reshape({batch_size, seqlen_q_ori, num_heads_ori, head_size_v});
     // softmax_lse = softmax_lse.view({batch_size, num_heads_k, seqlen_q_ori, ngroups}).transpose(2, 3)
     //         .reshape({batch_size, num_heads_ori, seqlen_q_ori});
